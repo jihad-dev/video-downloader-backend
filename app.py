@@ -1,19 +1,20 @@
+
 # import os
 # import uuid
-# import shutil
+# import threading
+# import time
 # from pathlib import Path
+# import tempfile
+
 # from fastapi import FastAPI, Form, HTTPException
 # from fastapi.responses import FileResponse, JSONResponse
 # from fastapi.middleware.cors import CORSMiddleware
 # import yt_dlp
-# import threading
-# import time
 
 # # ------------------------------
-# # Directories
+# # Directories (safe path for Render free tier)
 # # ------------------------------
-# BASE_DIR = Path(__file__).resolve().parent
-# TEMP_DIR = BASE_DIR / "temp"
+# TEMP_DIR = Path(tempfile.gettempdir()) / "videos"
 # os.makedirs(TEMP_DIR, exist_ok=True)
 
 # # ------------------------------
@@ -68,6 +69,7 @@
 #         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 #             info = ydl.extract_info(url, download=True)
 
+#             # যদি playlist হয়, প্রথম ভিডিও নাও
 #             if "_type" in info and info["_type"] == "playlist":
 #                 info = info["entries"][0]
 
@@ -81,8 +83,12 @@
 #             "filesize": file_path.stat().st_size,
 #             "download_url": f"/file/{file_path.name}",
 #         })
+
+#     except yt_dlp.utils.DownloadError as e:
+#         raise HTTPException(status_code=400, detail=f"Video download failed: {e}")
 #     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Download failed: {e}")
+#         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
 
 # @app.get("/file/{filename}")
 # async def get_file(filename: str):
@@ -98,20 +104,20 @@
 
 
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import os
 import uuid
 import threading
 import time
 from pathlib import Path
 import tempfile
-
-from fastapi import FastAPI, Form, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 import yt_dlp
 
 # ------------------------------
-# Directories (safe path for Render free tier)
+# Directories
 # ------------------------------
 TEMP_DIR = Path(tempfile.gettempdir()) / "videos"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -123,7 +129,7 @@ app = FastAPI(title="Video Downloader API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # production এ lock করুন
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -145,10 +151,17 @@ def schedule_delete(path: Path, delay_seconds: int = 60):
     threading.Thread(target=_del, daemon=True).start()
 
 # ------------------------------
+# Request model
+# ------------------------------
+class DownloadRequest(BaseModel):
+    url: str
+
+# ------------------------------
 # Routes
 # ------------------------------
 @app.post("/download")
-async def download_video(url: str = Form(...)):
+async def download_video(req: DownloadRequest):
+    url = req.url
     if not url or not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(status_code=400, detail="Invalid URL")
 
@@ -167,8 +180,6 @@ async def download_video(url: str = Form(...)):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-
-            # যদি playlist হয়, প্রথম ভিডিও নাও
             if "_type" in info and info["_type"] == "playlist":
                 info = info["entries"][0]
 
